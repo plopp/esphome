@@ -1,4 +1,5 @@
 #include "bme680.h"
+#include "BME680_driver/bme680.h"
 #include "esphome/core/log.h"
 
 namespace esphome {
@@ -72,19 +73,19 @@ static const char *iir_filter_to_str(BME680IIRFilter filter) {
 void BME680Component::setup() {
   ESP_LOGCONFIG(TAG, "Setting up BME680...");
   uint8_t chip_id;
-  if (!this->read_byte(BME680_REGISTER_CHIPID, &chip_id) || chip_id != 0x61) {
+  if (!this->read_byte(BME680_CHIP_ID, &chip_id) || chip_id != 0x61) {
     this->mark_failed();
     return;
   }
 
   // Read calibration
   uint8_t cal1[25];
-  if (!this->read_bytes(BME680_REGISTER_COEFF1, cal1, 25)) {
+  if (!this->read_bytes(BME680_COEFF_ADDR1, cal1, BME680_COEFF_ADDR1_LEN)) {
     this->mark_failed();
     return;
   }
   uint8_t cal2[16];
-  if (!this->read_bytes(BME680_REGISTER_COEFF2, cal2, 16)) {
+  if (!this->read_bytes(BME680_COEFF_ADDR2, cal2, BME680_COEFF_ADDR2_LEN)) {
     this->mark_failed();
     return;
   }
@@ -116,15 +117,15 @@ void BME680Component::setup() {
   this->calibration_.gh2 = cal2[12] << 8 | cal2[13];
   this->calibration_.gh3 = cal2[15];
 
-  if (!this->read_byte(0x02, &this->calibration_.res_heat_range)) {
+  if (!this->read_byte(BME680_ADDR_RES_HEAT_RANGE_ADDR, &this->calibration_.res_heat_range)) {
     this->mark_failed();
     return;
   }
-  if (!this->read_byte(0x00, &this->calibration_.res_heat_val)) {
+  if (!this->read_byte(BME680_ADDR_RES_HEAT_VAL_ADDR, &this->calibration_.res_heat_val)) {
     this->mark_failed();
     return;
   }
-  if (!this->read_byte(0x04, &this->calibration_.range_sw_err)) {
+  if (!this->read_byte(BME680_ADDR_RANGE_SW_ERR_ADDR, &this->calibration_.range_sw_err)) {
     this->mark_failed();
     return;
   }
@@ -133,40 +134,40 @@ void BME680Component::setup() {
 
   // Config register
   uint8_t config_register;
-  if (!this->read_byte(BME680_REGISTER_CONFIG, &config_register)) {
+  if (!this->read_byte(BME680_CONF_ODR_FILT_ADDR, &config_register)) {
     this->mark_failed();
     return;
   }
   config_register &= ~0b00011100;
   config_register |= (this->iir_filter_ & 0b111) << 2;
-  if (!this->write_byte(BME680_REGISTER_CONFIG, config_register)) {
+  if (!this->write_byte(BME680_CONF_ODR_FILT_ADDR, config_register)) {
     this->mark_failed();
     return;
   }
 
   // Humidity control register
   uint8_t hum_control;
-  if (!this->read_byte(BME680_REGISTER_CONTROL_HUMIDITY, &hum_control)) {
+  if (!this->read_byte(BME680_CONF_OS_H_ADDR, &hum_control)) {
     this->mark_failed();
     return;
   }
   hum_control &= ~0b00000111;
   hum_control |= this->humidity_oversampling_ & 0b111;
-  if (!this->write_byte(BME680_REGISTER_CONTROL_HUMIDITY, hum_control)) {
+  if (!this->write_byte(BME680_CONF_OS_H_ADDR, hum_control)) {
     this->mark_failed();
     return;
   }
 
   // Gas 1 control register
   uint8_t gas1_control;
-  if (!this->read_byte(BME680_REGISTER_CONTROL_GAS1, &gas1_control)) {
+  if (!this->read_byte(BME680_CONF_ODR_RUN_GAS_NBC_ADDR, &gas1_control)) {
     this->mark_failed();
     return;
   }
   gas1_control &= ~0b00011111;
   gas1_control |= 1 << 4;
   gas1_control |= 0;  // profile 0
-  if (!this->write_byte(BME680_REGISTER_CONTROL_GAS1, gas1_control)) {
+  if (!this->write_byte(BME680_CONF_ODR_RUN_GAS_NBC_ADDR, gas1_control)) {
     this->mark_failed();
     return;
   }
@@ -175,13 +176,13 @@ void BME680Component::setup() {
 
   // Gas 0 control register
   uint8_t gas0_control;
-  if (!this->read_byte(BME680_REGISTER_CONTROL_GAS0, &gas0_control)) {
+  if (!this->read_byte(BME680_CONF_HEAT_CTRL_ADDR, &gas0_control)) {
     this->mark_failed();
     return;
   }
   gas0_control &= ~0b00001000;
   gas0_control |= heat_off ? 0b100 : 0b000;
-  if (!this->write_byte(BME680_REGISTER_CONTROL_GAS0, gas0_control)) {
+  if (!this->write_byte(BME680_CONF_HEAT_CTRL_ADDR, gas0_control)) {
     this->mark_failed();
     return;
   }
@@ -189,7 +190,7 @@ void BME680Component::setup() {
   if (!heat_off) {
     // Gas Heater Temperature
     uint8_t temperature = this->calc_heater_resistance_(this->heater_temperature_);
-    if (!this->write_byte(BME680_REGISTER_HEATER_HEAT0, temperature)) {
+    if (!this->write_byte(BME680_RES_HEAT0_ADDR, temperature)) {
       this->mark_failed();
       return;
     }
@@ -197,7 +198,7 @@ void BME680Component::setup() {
     // Gas Heater Duration
     uint8_t duration = this->calc_heater_duration_(this->heater_duration_);
 
-    if (!this->write_byte(BME680_REGISTER_HEATER_WAIT0, duration)) {
+    if (!this->write_byte(BME680_GAS_WAIT0_ADDR, duration)) {
       this->mark_failed();
       return;
     }
@@ -234,7 +235,7 @@ void BME680Component::update() {
   meas_control |= (this->temperature_oversampling_ & 0b111) << 5;
   meas_control |= (this->pressure_oversampling_ & 0b111) << 5;
   meas_control |= 0b01;  // forced mode
-  if (!this->write_byte(BME680_REGISTER_CONTROL_MEAS, meas_control)) {
+  if (!this->write_byte(BME680_CONF_T_P_MODE_ADDR, meas_control)) {
     this->status_set_warning();
     return;
   }
